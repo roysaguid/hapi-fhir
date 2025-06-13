@@ -85,7 +85,7 @@ public class CustomForwardingInterceptor {
             headers.forEach((k, v) -> System.out.println(k + ": " + v));
 
             HttpEntity<String> entity = new HttpEntity<>(rawBody, headers);
-            String forwardUrl = "https://seir-api-1057985422230.asia-southeast1.run.app" + fullPath;
+            String forwardUrl = "https://seir-api-128112993769.asia-southeast1.run.app" + fullPath;
             HttpMethod httpMethod = HttpMethod.valueOf(method);
 
             if (httpMethod == null) {

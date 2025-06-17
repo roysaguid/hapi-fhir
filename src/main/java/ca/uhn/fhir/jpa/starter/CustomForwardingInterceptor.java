@@ -1,8 +1,6 @@
 package ca.uhn.fhir.jpa.starter;
 
-import ca.uhn.fhir.interceptor.api.Hook;
-import ca.uhn.fhir.interceptor.api.Interceptor;
-import ca.uhn.fhir.interceptor.api.Pointcut;
+import ca.uhn.fhir.interceptor.api.*;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
@@ -16,44 +14,47 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
+import java.util.Map;
 
 @Interceptor
 public class CustomForwardingInterceptor {
 
     private final RestTemplate restTemplate = new RestTemplate();
+    private static final String TARGET_BASE_URL = "https://seir-api-128112993769.asia-southeast1.run.app";
 
     @Hook(Pointcut.SERVER_INCOMING_REQUEST_POST_PROCESSED)
     public boolean handleAllRequests(RequestDetails requestDetails, IBaseResource resource) {
         try {
-            if (!(requestDetails instanceof ServletRequestDetails)) {
+            if (!(requestDetails instanceof ServletRequestDetails servletRequestDetails)) {
                 throw new InvalidRequestException("Not a ServletRequestDetails request");
             }
 
-            ServletRequestDetails servletRequestDetails = (ServletRequestDetails) requestDetails;
             HttpServletRequest servletRequest = servletRequestDetails.getServletRequest();
             HttpServletResponse servletResponse = servletRequestDetails.getServletResponse();
 
             String method = servletRequest.getMethod();
             String path = servletRequest.getRequestURI();
-            String query = servletRequest.getQueryString();
-
             String strippedPath = path.replaceFirst("^/fhir", "");
-            String fullPath = query != null ? strippedPath + "?" + query : strippedPath;
+
+            // Handle GET query string manually (supports multiple values)
+            String query = reconstructQueryString(servletRequest);
+            String fullPath = query.isEmpty() ? strippedPath : strippedPath + "?" + query;
+
+            // Allow GET to /metadata and root paths to pass through
+            if (method.equalsIgnoreCase("GET") &&
+                    (path.equals("/") || path.equals("/fhir") || path.equals("/fhir/") || path.equals("/fhir/metadata"))) {
+                System.out.println("Bypassing forwarding for " + path);
+                return true;
+            }
 
             System.out.println("=== Intercepted HTTP Request ===");
             System.out.println("Method: " + method);
             System.out.println("Original Path: " + path);
             System.out.println("Forwarding Path: " + fullPath);
 
-            if (method.equalsIgnoreCase("GET") &&
-                (path.equals("/fhir/metadata") || path.equals("/") || path.equals("/fhir") || path.equals("/fhir/"))) {
-                System.out.println("Bypassing forwarding for " + path);
-                return true;
-            }
-
-            // Read the full request body once
+            // Read body (for POST, PUT, etc.)
             BufferedReader reader = new BufferedReader(
-                new InputStreamReader(servletRequest.getInputStream(), StandardCharsets.UTF_8));
+                    new InputStreamReader(servletRequest.getInputStream(), StandardCharsets.UTF_8));
             StringBuilder requestBodyBuilder = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
@@ -61,10 +62,9 @@ public class CustomForwardingInterceptor {
             }
             String rawBody = requestBodyBuilder.toString();
 
-            System.out.println("Request Body:");
-            System.out.println(rawBody);
+            System.out.println("Request Body:\n" + rawBody);
 
-            // Collect headers but exclude Content-Length
+            // Collect headers (excluding Content-Length)
             HttpHeaders headers = new HttpHeaders();
             Enumeration<String> headerNames = servletRequest.getHeaderNames();
             while (headerNames.hasMoreElements()) {
@@ -85,14 +85,13 @@ public class CustomForwardingInterceptor {
             headers.forEach((k, v) -> System.out.println(k + ": " + v));
 
             HttpEntity<String> entity = new HttpEntity<>(rawBody, headers);
-            String forwardUrl = "https://seir-api-1057985422230.asia-southeast1.run.app" + fullPath;
-            HttpMethod httpMethod = HttpMethod.valueOf(method);
-
+            HttpMethod httpMethod = HttpMethod.valueOf(method.toUpperCase());
             if (httpMethod == null) {
                 throw new InvalidRequestException("Unsupported HTTP method: " + method);
             }
 
-            System.out.println("Forwarding request to downstream server:");
+            String forwardUrl = TARGET_BASE_URL + fullPath;
+            System.out.println("Forwarding request to downstream:");
             System.out.println("URL: " + forwardUrl);
             System.out.println("HTTP Method: " + httpMethod);
 
@@ -102,24 +101,33 @@ public class CustomForwardingInterceptor {
             System.out.println("Status Code: " + response.getStatusCodeValue());
             System.out.println("Response Headers:");
             response.getHeaders().forEach((k, v) -> System.out.println(k + ": " + v));
-            System.out.println("Response Body:");
-            System.out.println(response.getBody());
-
-            String responseBody = response.getBody() != null ? response.getBody() : "";
-            MediaType contentType = response.getHeaders().getContentType();
+            System.out.println("Response Body:\n" + response.getBody());
 
             servletResponse.setStatus(response.getStatusCodeValue());
+            MediaType contentType = response.getHeaders().getContentType();
             servletResponse.setContentType(contentType != null ? contentType.toString() : MediaType.APPLICATION_JSON_VALUE);
-            servletResponse.getWriter().write(responseBody);
+            servletResponse.getWriter().write(response.getBody() != null ? response.getBody() : "");
             servletResponse.getWriter().flush();
             servletResponse.getWriter().close();
 
-            return false;
+            return false; // stop further HAPI FHIR processing
 
         } catch (Exception e) {
             System.out.println("=== Error occurred during forwarding ===");
             e.printStackTrace();
             throw new InvalidRequestException("Failed to forward request: " + e.getMessage(), e);
         }
+    }
+
+    private String reconstructQueryString(HttpServletRequest request) {
+        StringBuilder result = new StringBuilder();
+        for (Map.Entry<String, String[]> entry : request.getParameterMap().entrySet()) {
+            String key = entry.getKey();
+            for (String value : entry.getValue()) {
+                if (result.length() > 0) result.append("&");
+                result.append(key).append("=").append(value);
+            }
+        }
+        return result.toString();
     }
 }

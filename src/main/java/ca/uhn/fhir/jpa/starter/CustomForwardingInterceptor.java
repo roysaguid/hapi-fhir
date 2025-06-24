@@ -29,7 +29,7 @@ import jakarta.servlet.http.HttpServletResponse;
 public class CustomForwardingInterceptor {
 
 	private final RestTemplate restTemplate = new RestTemplate();
-	private static final String TARGET_BASE_URL = "https://seir-api-128112993769.asia-southeast1.run.app";
+	private static final String TARGET_BASE_URL = "https://seir-api-247727619003.asia-southeast1.run.app";
 
 	@Hook(Pointcut.SERVER_INCOMING_REQUEST_POST_PROCESSED)
 	public boolean handleAllRequests(RequestDetails requestDetails, IBaseResource resource) {
